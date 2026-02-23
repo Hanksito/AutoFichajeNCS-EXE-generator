@@ -114,48 +114,93 @@ def obtener_datos_presencia(driver):
         return {"presencia": "00:00", "jornada": "00:00", "extra": "00:00"}
 
 
-def realizar_fichaje(driver, timeout=30):
+def realizar_fichaje(driver, tipo_esperado="", timeout=30):
     """
-    Realiza el fichaje (marca entrada o salida según corresponda).
-    
+    Realiza el fichaje verificando primero el estado real de la web.
+
+    La lógica es:
+      - Si tipo_esperado == "ENTRADA" → la web debe indicar FUERA.
+        Si indica DENTRO significa que alguien ya fichó → NO fichar.
+      - Si tipo_esperado == "SALIDA"  → la web debe indicar DENTRO.
+        Si indica FUERA significa que ya se salió → NO fichar.
+
     Args:
-        driver: WebDriver de Selenium
-        timeout: Tiempo máximo de espera en segundos
-        
+        driver:         WebDriver de Selenium
+        tipo_esperado:  "ENTRADA" o "SALIDA" (obligatorio para seguridad)
+        timeout:        Tiempo máximo de espera en segundos
+
     Returns:
         dict: {
-            "success": bool,
-            "tipo": "ENTRADA"|"SALIDA"|"DESCONOCIDO",
-            "mensaje": str,
-            "presencia": str,
-            "jornada": str,
-            "hora_fichaje": str
+            "success":      bool,
+            "tipo":         str,
+            "mensaje":      str,
+            "presencia":    str,
+            "jornada":      str,
+            "hora_fichaje": str,
+            "saltado":      bool  ← True si se omitió porque ya estaba hecho
         }
     """
     print("=" * 60)
     print("🕐 INICIANDO PROCESO DE FICHAJE")
     print("=" * 60)
-    
+
+    def resultado_saltado(motivo):
+        return {
+            "success": True,   # no es un error, simplemente no era necesario fichar
+            "tipo": tipo_esperado,
+            "mensaje": motivo,
+            "presencia": "",
+            "jornada": "",
+            "hora_fichaje": "",
+            "saltado": True,
+        }
+
+    def resultado_error(motivo):
+        return {
+            "success": False,
+            "tipo": tipo_esperado,
+            "mensaje": motivo,
+            "presencia": "",
+            "jornada": "",
+            "hora_fichaje": "",
+            "saltado": False,
+        }
+
     try:
-        # Paso 1: Detectar estado actual
-        print("🔍 Detectando estado actual...")
-        estado_inicial = detectar_estado_fichaje(driver)
-        print(f"📊 {estado_inicial['mensaje']}")
-        
-        tipo_fichaje = estado_inicial["estado"]
-        
-        pausa_humana(1.0, 2.0)
-        
-        # Paso 2: Obtener datos de presencia ANTES del fichaje
+        # ── Paso 1: Leer estado real de la web ───────────────────────
+        print("🔍 Leyendo estado actual de la web...")
+        estado_web = detectar_estado_fichaje(driver)
+        estado_actual = estado_web["estado"]   # "ENTRADA" | "SALIDA" | "DESCONOCIDO"
+        print(f"📊 Estado web: {estado_web['mensaje']}")
+
+        # ── Paso 2: Verificar si el fichaje tiene sentido ─────────────
+        if tipo_esperado == "ENTRADA":
+            if estado_actual == "SALIDA":
+                # Web dice DENTRO → alguien ya fichó entrada
+                motivo = "Ya estás DENTRO (alguien fichó antes). Se omite el fichaje de ENTRADA."
+                print(f"⏭️  {motivo}")
+                return resultado_saltado(motivo)
+            elif estado_actual == "DESCONOCIDO":
+                print("⚠️  Estado desconocido, se intentará fichar igualmente")
+
+        elif tipo_esperado == "SALIDA":
+            if estado_actual == "ENTRADA":
+                # Web dice FUERA → ya se salió o nadie entró
+                motivo = "Ya estás FUERA (salida ya realizada o no había entrada). Se omite el fichaje de SALIDA."
+                print(f"⏭️  {motivo}")
+                return resultado_saltado(motivo)
+            elif estado_actual == "DESCONOCIDO":
+                print("⚠️  Estado desconocido, se intentará fichar igualmente")
+
+        # ── Paso 3: Datos de presencia antes del fichaje ──────────────
         print("📊 Obteniendo datos de presencia...")
         datos_antes = obtener_datos_presencia(driver)
         print(f"   Presencia actual: {datos_antes['presencia']}")
         print(f"   Jornada: {datos_antes['jornada']}")
-        print(f"   {datos_antes['extra']}")
-        
-        pausa_humana(0.5, 1.0)
-        
-        # Paso 3: Buscar el botón de fichaje (id="btnTicar")
+
+        pausa_humana(0.8, 1.5)
+
+        # ── Paso 4: Buscar el botón de fichaje ────────────────────────
         print("🔍 Buscando botón de fichaje...")
         try:
             boton_fichar = WebDriverWait(driver, timeout).until(
@@ -163,109 +208,74 @@ def realizar_fichaje(driver, timeout=30):
             )
             print("✅ Botón de fichaje encontrado")
         except TimeoutException:
-            return {
-                "success": False,
-                "tipo": tipo_fichaje,
-                "mensaje": "No se encontró el botón de fichaje (id='btnTicar')",
-                "presencia": datos_antes.get("presencia", "00:00"),
-                "jornada": datos_antes.get("jornada", "00:00"),
-                "hora_fichaje": ""
-            }
-        
+            return resultado_error("No se encontró el botón de fichaje (id='btnTicar')")
+
         pausa_humana(0.8, 1.5)
-        
-        # Paso 4: Hacer clic en el botón
-        print(f"👆 Pulsando botón de fichaje ({tipo_fichaje})...")
+
+        # ── Paso 5: Clic en el botón ──────────────────────────────────
+        print(f"👆 Pulsando botón de fichaje ({tipo_esperado})...")
         try:
             boton_fichar.click()
         except Exception:
-            # Si el clic normal falla, usar JavaScript
             driver.execute_script("arguments[0].click();", boton_fichar)
-        
         print("✅ Botón pulsado")
-        
-        # Paso 5: Esperar a que se procese el fichaje
+
+        # ── Paso 6: Esperar confirmación ──────────────────────────────
         print("⏳ Esperando confirmación del servidor...")
         pausa_humana(3.0, 5.0)
-        
-        # Paso 6: Verificar si hubo algún error
+
+        # ── Paso 7: Verificar errores del servidor ────────────────────
         try:
-            # Buscar alertas de error
             error_alert = driver.find_element(By.CSS_SELECTOR, ".alert.alert-danger")
             if error_alert.is_displayed():
-                mensaje_error = error_alert.text
-                print(f"❌ Error en el fichaje: {mensaje_error}")
-                return {
-                    "success": False,
-                    "tipo": tipo_fichaje,
-                    "mensaje": f"Error del servidor: {mensaje_error}",
-                    "presencia": datos_antes.get("presencia", "00:00"),
-                    "jornada": datos_antes.get("jornada", "00:00"),
-                    "hora_fichaje": ""
-                }
+                return resultado_error(f"Error del servidor: {error_alert.text}")
         except NoSuchElementException:
-            # No hay alerta de error, el fichaje fue exitoso
             pass
-        
-        # Paso 7: Verificar el nuevo estado
+
+        # ── Paso 8: Confirmar que el estado cambió ────────────────────
         print("🔍 Verificando nuevo estado...")
         pausa_humana(1.0, 2.0)
-        
-        estado_final = detectar_estado_fichaje(driver)
-        datos_despues = obtener_datos_presencia(driver)
-        
-        # Obtener la hora actual del fichaje
+
         from datetime import datetime
         hora_fichaje = datetime.now().strftime("%H:%M:%S")
-        
-        # Verificar que el estado cambió (señal de fichaje exitoso)
-        if estado_final["estado"] != estado_inicial["estado"]:
-            print(f"✅ ¡Fichaje de {tipo_fichaje} realizado con éxito!")
+
+        estado_final = detectar_estado_fichaje(driver)
+        datos_despues = obtener_datos_presencia(driver)
+
+        if estado_final["estado"] != estado_actual:
+            print(f"✅ ¡Fichaje de {tipo_esperado} realizado con éxito!")
             print(f"   Hora de fichaje: {hora_fichaje}")
             print(f"   Nueva presencia: {datos_despues['presencia']}")
-            print(f"   {datos_despues['extra']}")
-            
             return {
                 "success": True,
-                "tipo": tipo_fichaje,
-                "mensaje": f"Fichaje de {tipo_fichaje} realizado correctamente",
-                "presencia": datos_despues.get("presencia", "00:00"),
-                "jornada": datos_despues.get("jornada", "00:00"),
+                "tipo": tipo_esperado,
+                "mensaje": f"Fichaje de {tipo_esperado} realizado correctamente",
+                "presencia": datos_despues.get("presencia", ""),
+                "jornada": datos_despues.get("jornada", ""),
                 "hora_fichaje": hora_fichaje,
-                "extra": datos_despues.get("extra", "")
+                "extra": datos_despues.get("extra", ""),
+                "saltado": False,
             }
         else:
-            # El estado no cambió, pero tampoco hubo error
-            # Podría ser que ya estaba fichado
-            print(f"⚠️  El estado no cambió después del clic")
+            # Estado no cambió pero tampoco hubo error → aceptar
+            print(f"⚠️  El estado no cambió visualmente, pero no hubo error")
             return {
-                "success": True,  # Lo consideramos exitoso porque no hubo error
-                "tipo": tipo_fichaje,
-                "mensaje": f"Fichaje procesado (estado sin cambios visibles)",
-                "presencia": datos_despues.get("presencia", "00:00"),
-                "jornada": datos_despues.get("jornada", "00:00"),
+                "success": True,
+                "tipo": tipo_esperado,
+                "mensaje": "Fichaje procesado (sin cambio de estado visible)",
+                "presencia": datos_despues.get("presencia", ""),
+                "jornada": datos_despues.get("jornada", ""),
                 "hora_fichaje": hora_fichaje,
-                "extra": datos_despues.get("extra", "")
+                "extra": datos_despues.get("extra", ""),
+                "saltado": False,
             }
-    
+
     except Exception as e:
-        print(f"❌ Error inesperado durante el fichaje: {e}")
-        return {
-            "success": False,
-            "tipo": "DESCONOCIDO",
-            "mensaje": f"Error inesperado: {str(e)}",
-            "presencia": "00:00",
-            "jornada": "00:00",
-            "hora_fichaje": ""
-        }
+        return resultado_error(f"Error inesperado: {str(e)}") 
 
 
-# Función de prueba standalone
+# Módulo de fichaje - debe importarse, no ejecutarse directamente
 if __name__ == "__main__":
     print("Este módulo debe ser importado, no ejecutado directamente.")
-    print("Ejemplo de uso:")
-    print()
-    print("  from ncs_fichaje import realizar_fichaje")
-    print("  resultado = realizar_fichaje(driver)")
-    print("  if resultado['success']:")
-    print("      print(f'Fichaje de {resultado[\"tipo\"]} exitoso!')")
+    print("Uso:  from ncs_fichaje import realizar_fichaje")
+

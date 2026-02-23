@@ -177,7 +177,7 @@ class VentanaConfiguracion:
         
         info_text = (
             "• Fichaje automático de Lunes a Viernes\n"
-            "• Entrada: 8:50 - 9:05 (aleatorio)\n"
+            "• Entrada: 8:45 - 8:55 (aleatorio)\n"
             "• Salida: 18:05 - 18:30 (aleatorio)\n"
             "• Se ejecutará en segundo plano"
         )
@@ -254,8 +254,8 @@ class VentanaConfiguracion:
 
 # Configuración
 DIAS_LABORABLES = [0, 1, 2, 3, 4]
-ENTRADA_DESDE = "08:50"
-ENTRADA_HASTA = "09:05"
+ENTRADA_DESDE = "08:45"
+ENTRADA_HASTA = "08:55"
 SALIDA_DESDE = "18:05"
 SALIDA_HASTA = "18:30"
 CSV_FICHAJES = "fichajes.csv"
@@ -449,7 +449,7 @@ def main():
             "Se ejecutará en segundo plano hasta que apagues el PC.\n\n"
             "Fichaje automático:\n"
             "• Lunes a Viernes\n"
-            "• Entrada: 8:50 - 9:05\n"
+            "• Entrada: 8:45 - 8:55\n"
             "• Salida: 18:05 - 18:30"
         )
         root.destroy()

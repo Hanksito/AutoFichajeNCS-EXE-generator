@@ -35,8 +35,8 @@ load_dotenv()
 DIAS_LABORABLES = [0, 1, 2, 3, 4]
 
 # Horarios de entrada (formato HH:MM)
-ENTRADA_DESDE = "08:50"
-ENTRADA_HASTA = "09:05"
+ENTRADA_DESDE = "08:45"
+ENTRADA_HASTA = "08:55"
 
 # Horarios de salida (formato HH:MM)
 SALIDA_DESDE = "18:05"
@@ -44,6 +44,50 @@ SALIDA_HASTA = "18:30"
 
 # Archivo CSV de registro
 CSV_FICHAJES = "fichajes.csv"
+
+# Archivo de log
+LOG_FILE = "auto_fichaje.log"
+
+
+# ============================================================
+# 📝 Sistema de Logging
+# ============================================================
+
+def escribir_log(mensaje, nivel="INFO"):
+    """Escribe un mensaje en el archivo de log con timestamp."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    linea = f"[{timestamp}] [{nivel}] {mensaje}\n"
+    
+    try:
+        with open(LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(linea)
+    except Exception:
+        pass  # Silenciar errores de logging
+
+
+def log_info(mensaje):
+    """Log de nivel INFO."""
+    escribir_log(mensaje, "INFO")
+    print(f"ℹ️  {mensaje}")
+
+
+def log_success(mensaje):
+    """Log de nivel SUCCESS."""
+    escribir_log(mensaje, "SUCCESS")
+    print(f"✅ {mensaje}")
+
+
+def log_warning(mensaje):
+    """Log de nivel WARNING."""
+    escribir_log(mensaje, "WARNING")
+    print(f"⚠️  {mensaje}")
+
+
+def log_error(mensaje):
+    """Log de nivel ERROR."""
+    escribir_log(mensaje, "ERROR")
+    print(f"❌ {mensaje}")
+
 
 
 # ============================================================
@@ -174,8 +218,10 @@ def realizar_fichaje_completo(tipo_esperado=""):
     password = os.getenv("NCS_PASSWORD", "")
     
     if not usuario or not password:
-        print("❌ ERROR: No se encontraron credenciales en .env")
+        log_error("No se encontraron credenciales en .env")
         return False
+    
+    log_info(f"Iniciando proceso de fichaje ({tipo_esperado})")
     
     # Crear logger CSV
     logger = FichajeCSVLogger(CSV_FICHAJES)
@@ -183,37 +229,44 @@ def realizar_fichaje_completo(tipo_esperado=""):
     # Crear navegador
     driver = crear_navegador()
     if not driver:
+        log_error("No se pudo crear el navegador")
         return False
     
     try:
         # Navegar a la página
         url = "https://clock.ncs.es/ClienteReloj/DoTicada"
-        print(f"📄 Navegando a la página de fichaje...")
+        log_info(f"Navegando a {url}")
         driver.get(url)
         time.sleep(3)
         
         # Login (si es necesario)
         resultado_login = ncs_login.realizar_login(driver, usuario, password)
         if not resultado_login["success"]:
-            print(f"❌ Login fallido: {resultado_login['mensaje']}")
+            log_error(f"Login fallido: {resultado_login['mensaje']}")
             return False
         
-        print("✅ Login exitoso")
-        print()
+        log_success("Login exitoso")
         
-        # Realizar fichaje
-        resultado_fichaje = ncs_fichaje.realizar_fichaje(driver)
-        
+        # Realizar fichaje verificando estado real de la web
+        resultado_fichaje = ncs_fichaje.realizar_fichaje(driver, tipo_esperado=tipo_esperado)
+
         print()
         print("=" * 60)
-        
+
+        if resultado_fichaje.get("saltado"):
+            # Alguien ya fichó manualmente → no era necesario actuar
+            motivo = resultado_fichaje["mensaje"]
+            print(f"⏭️  FICHAJE OMITIDO: {motivo}")
+            log_warning(f"Fichaje {tipo_esperado} omitido: {motivo}")
+            return True  # No es un error, el estado ya era el correcto
+
         if resultado_fichaje["success"]:
-            tipo = resultado_fichaje["tipo"]
-            hora = resultado_fichaje["hora_fichaje"]
+            tipo     = resultado_fichaje["tipo"]
+            hora     = resultado_fichaje["hora_fichaje"]
             presencia = resultado_fichaje.get("presencia", "")
-            jornada = resultado_fichaje.get("jornada", "")
-            extra = resultado_fichaje.get("extra", "")
-            
+            jornada  = resultado_fichaje.get("jornada", "")
+            extra    = resultado_fichaje.get("extra", "")
+
             print(f"✅ ¡FICHAJE DE {tipo} EXITOSO!")
             print(f"   📅 {datetime.now().strftime('%d/%m/%Y')}")
             print(f"   ⏰ Hora: {hora}")
@@ -222,8 +275,9 @@ def realizar_fichaje_completo(tipo_esperado=""):
             if extra:
                 print(f"   {extra}")
             print("=" * 60)
-            
-            # Registrar en CSV
+
+            log_success(f"Fichaje {tipo} exitoso a las {hora} - Presencia: {presencia}")
+
             logger.registrar_fichaje(
                 tipo=tipo,
                 hora=hora,
@@ -232,23 +286,28 @@ def realizar_fichaje_completo(tipo_esperado=""):
                 extra=extra,
                 observaciones="Fichaje automático"
             )
-            
+
             print("📝 Fichaje registrado en CSV")
             return True
+
         else:
-            print(f"❌ Fichaje fallido: {resultado_fichaje['mensaje']}")
+            mensaje_error = resultado_fichaje['mensaje']
+            print(f"❌ Fichaje fallido: {mensaje_error}")
+            log_error(f"Fichaje fallido: {mensaje_error}")
             
             # Registrar el fallo
             logger.registrar_fichaje(
                 tipo=tipo_esperado,
                 hora="",
-                observaciones=f"ERROR: {resultado_fichaje['mensaje']}"
+                observaciones=f"ERROR: {mensaje_error}"
             )
             
             return False
     
     except Exception as e:
-        print(f"❌ Error inesperado: {e}")
+        error_msg = f"Error inesperado: {e}"
+        print(f"❌ {error_msg}")
+        log_error(error_msg)
         return False
     
     finally:
@@ -262,69 +321,64 @@ def realizar_fichaje_completo(tipo_esperado=""):
 
 class AutoFichaje:
     """Gestiona la ejecución continua del fichaje automático."""
-    
+
     def __init__(self):
         self._running = True
-        
-        # Manejar Ctrl+C
+
+        # Registro de lo que ya se ha hecho HOY (evita dobles fichajes)
+        self._fecha_entrada = None   # fecha en que se fichó entrada
+        self._fecha_salida = None    # fecha en que se fichó salida
+
+        # Hora aleatoria calculada para hoy
+        self._hora_entrada_hoy = None
+        self._hora_salida_hoy = None
+
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-    
+
     def _signal_handler(self, signum, frame):
         """Maneja Ctrl+C de forma limpia."""
-        print("\n\n🛑 Señal de interrupción recibida. Cerrando...")
+        log_info("Señal de interrupción recibida. Cerrando...")
         self._running = False
         sys.exit(0)
-    
-    def ejecutar_dia(self):
-        """Ejecuta el fichaje de un día completo (entrada + salida)."""
-        print("\n")
-        print("╔" + "═" * 58 + "╗")
-        print(f"║  📅 {nombre_dia()} {datetime.now().strftime('%d/%m/%Y')}" + " " * 34 + "║")
-        print("╚" + "═" * 58 + "╝")
-        
-        if not es_dia_laborable():
-            print("🏖️  Hoy no es día laborable. Esperando al próximo día...")
-            return
-        
-        # --- FICHAJE DE ENTRADA ---
-        hora_entrada = calcular_hora_aleatoria(ENTRADA_DESDE, ENTRADA_HASTA)
-        print(f"⏰ Hora de ENTRADA programada: {hora_entrada.strftime('%H:%M:%S')}")
-        
-        # --- FICHAJE DE SALIDA ---
-        hora_salida = calcular_hora_aleatoria(SALIDA_DESDE, SALIDA_HASTA)
-        print(f"⏰ Hora de SALIDA programada:  {hora_salida.strftime('%H:%M:%S')}")
-        print()
-        
-        ahora = datetime.now()
-        
-        # Realizar fichaje de entrada (si no ha pasado ya)
-        if ahora < hora_entrada:
-            esperar_hasta(hora_entrada)
-            print("\n🕐 Realizando fichaje de ENTRADA...\n")
-            realizar_fichaje_completo("ENTRADA")
-        elif ahora.hour < 14:  # Si aún es por la mañana temprano
-            print("⚠️  La hora de entrada ya pasó, fichando ahora...")
-            realizar_fichaje_completo("ENTRADA")
-        else:
-            print("⏭️  Hora de entrada ya pasada, solo se realizará la salida")
-        
-        # Esperar a la hora de salida
-        ahora = datetime.now()
-        if ahora < hora_salida:
-            print()
-            esperar_hasta(hora_salida)
-            print("\n🕐 Realizando fichaje de SALIDA...\n")
-            realizar_fichaje_completo("SALIDA")
-        else:
-            print("⚠️  La hora de salida ya pasó, fichando ahora...")
-            realizar_fichaje_completo("SALIDA")
-        
-        print()
-        print("✅ Día completado")
-    
+
+    def _calcular_horarios_para_hoy(self):
+        """Calcula (o recalcula) los horarios aleatorios para el día actual."""
+        self._hora_entrada_hoy = calcular_hora_aleatoria(ENTRADA_DESDE, ENTRADA_HASTA)
+        self._hora_salida_hoy  = calcular_hora_aleatoria(SALIDA_DESDE,  SALIDA_HASTA)
+        log_info(f"Horarios de hoy → Entrada: {self._hora_entrada_hoy.strftime('%H:%M:%S')} | Salida: {self._hora_salida_hoy.strftime('%H:%M:%S')}")
+
+    def _es_nuevo_dia(self):
+        """Devuelve True si hoy es un día diferente al último ciclo procesado."""
+        hoy = datetime.now().date()
+        # Si ninguno de los dos está registrado O el último registrado no es hoy
+        ultima = self._fecha_salida or self._fecha_entrada
+        return ultima is None or ultima != hoy
+
+    def _ventana_entrada_activa(self, ahora: datetime) -> bool:
+        """True si estamos dentro de la ventana horaria de entrada."""
+        h_desde = datetime.strptime(ENTRADA_DESDE, "%H:%M").replace(
+            year=ahora.year, month=ahora.month, day=ahora.day)
+        h_hasta = datetime.strptime(ENTRADA_HASTA, "%H:%M").replace(
+            year=ahora.year, month=ahora.month, day=ahora.day)
+        return h_desde <= ahora <= h_hasta
+
+    def _ventana_salida_activa(self, ahora: datetime) -> bool:
+        """True si estamos dentro de la ventana horaria de salida."""
+        h_desde = datetime.strptime(SALIDA_DESDE, "%H:%M").replace(
+            year=ahora.year, month=ahora.month, day=ahora.day)
+        h_hasta = datetime.strptime(SALIDA_HASTA, "%H:%M").replace(
+            year=ahora.year, month=ahora.month, day=ahora.day)
+        return h_desde <= ahora <= h_hasta
+
     def ejecutar_continuo(self):
-        """Ejecuta el fichaje de forma continua, día tras día."""
+        """
+        Bucle principal: comprueba cada minuto si hay que fichar.
+        - Al inicio del día (o arranque) calcula horarios aleatorios.
+        - Ficha ENTRADA cuando la hora aleatoria llega dentro de la ventana.
+        - Ficha SALIDA cuando la hora aleatoria llega dentro de la ventana.
+        - Nunca ficha dos veces el mismo tipo en el mismo día.
+        """
         print()
         print("╔" + "═" * 58 + "╗")
         print("║" + " " * 10 + "🕐 AUTO FICHAJE - NCS Clock" + " " * 21 + "║")
@@ -336,28 +390,85 @@ class AutoFichaje:
         print(f"⏰ Salida:  {SALIDA_DESDE} - {SALIDA_HASTA}")
         print(f"📅 Días:    Lunes a Viernes")
         print(f"📝 Log CSV: {CSV_FICHAJES}")
+        print(f"📄 Log:     {LOG_FILE}")
         print()
-        
+
+        log_info("=" * 60)
+        log_info("🚀 AUTO FICHAJE INICIADO")
+        log_info(f"Ventana entrada: {ENTRADA_DESDE}-{ENTRADA_HASTA} | Ventana salida: {SALIDA_DESDE}-{SALIDA_HASTA}")
+        log_info("=" * 60)
+
+        ultimo_dia_procesado = None  # para detectar cambio de día
+
         while self._running:
-            self.ejecutar_dia()
-            
-            if not self._running:
-                break
-            
-            # Esperar al día siguiente
-            segundos = segundos_hasta_manana() + random.randint(60, 300)
-            proximo = datetime.now() + timedelta(seconds=segundos)
-            
-            print()
-            print("─" * 60)
-            print(f"💤 Próximo día: {proximo.strftime('%A %d/%m/%Y %H:%M')}")
-            print(f"💤 Durmiendo {int(segundos // 3600)}h {int((segundos % 3600) // 60)}min...")
-            print("─" * 60)
-            
-            # Dormir hasta el día siguiente
-            inicio_sleep = time.time()
-            while self._running and (time.time() - inicio_sleep) < segundos:
-                time.sleep(min(60, segundos - (time.time() - inicio_sleep)))
+            ahora = datetime.now()
+            hoy   = ahora.date()
+
+            # ── Detectar nuevo día y calcular horarios frescos ──────────
+            if hoy != ultimo_dia_procesado:
+                ultimo_dia_procesado = hoy
+                print(f"\n📅 Nuevo día: {nombre_dia()} {ahora.strftime('%d/%m/%Y')}")
+                log_info(f"===== INICIO DE DÍA: {nombre_dia()} {ahora.strftime('%d/%m/%Y')} =====")
+
+                if not es_dia_laborable():
+                    log_warning(f"Hoy es {nombre_dia()} (no laborable). Esperando al lunes...")
+                    print(f"🏖️  Hoy es {nombre_dia()}, no es día laborable. Descansando...")
+                else:
+                    self._calcular_horarios_para_hoy()
+
+            # ── Solo actuar en días laborables ───────────────────────────
+            if not es_dia_laborable():
+                time.sleep(60)
+                continue
+
+            entrada_ya_hecha = self._fecha_entrada == hoy
+            salida_ya_hecha  = self._fecha_salida  == hoy
+
+            # ── Fichaje de ENTRADA ────────────────────────────────────────
+            if (not entrada_ya_hecha
+                    and self._hora_entrada_hoy is not None
+                    and ahora >= self._hora_entrada_hoy
+                    and self._ventana_entrada_activa(ahora)):
+
+                log_info(f"⏰ Hora de entrada alcanzada ({ahora.strftime('%H:%M:%S')}). Fichando ENTRADA...")
+                print(f"\n🕐 Fichando ENTRADA a las {ahora.strftime('%H:%M:%S')}...\n")
+                exito = realizar_fichaje_completo("ENTRADA")
+                if exito:
+                    self._fecha_entrada = hoy
+                    log_success(f"Entrada registrada el {hoy}")
+                else:
+                    log_error("Fallo en fichaje de ENTRADA - se reintentará en 5 min")
+                    # dejar _fecha_entrada = None para reintentar en la siguiente iteración
+                    time.sleep(300)
+                    continue
+
+            # ── Fichaje de SALIDA ─────────────────────────────────────────
+            if (not salida_ya_hecha
+                    and self._hora_salida_hoy is not None
+                    and ahora >= self._hora_salida_hoy
+                    and self._ventana_salida_activa(ahora)):
+
+                log_info(f"⏰ Hora de salida alcanzada ({ahora.strftime('%H:%M:%S')}). Fichando SALIDA...")
+                print(f"\n🕐 Fichando SALIDA a las {ahora.strftime('%H:%M:%S')}...\n")
+                exito = realizar_fichaje_completo("SALIDA")
+                if exito:
+                    self._fecha_salida = hoy
+                    log_success(f"Salida registrada el {hoy}")
+                    log_success(f"===== DÍA COMPLETADO: {ahora.strftime('%d/%m/%Y %H:%M:%S')} =====")
+                    print("✅ Día completado. Esperando al próximo día laborable...")
+                else:
+                    log_error("Fallo en fichaje de SALIDA - se reintentará en 5 min")
+                    time.sleep(300)
+                    continue
+
+            # ── Mostrar estado cada 30 min (informativo) ─────────────────
+            if ahora.minute % 30 == 0 and ahora.second < 61:
+                estado_e = "✅" if entrada_ya_hecha else f"⏳ {self._hora_entrada_hoy.strftime('%H:%M') if self._hora_entrada_hoy else '?'}"
+                estado_s = "✅" if salida_ya_hecha  else f"⏳ {self._hora_salida_hoy.strftime('%H:%M')  if self._hora_salida_hoy  else '?'}"
+                print(f"\r[{ahora.strftime('%H:%M')}] Entrada: {estado_e} | Salida: {estado_s}   ", end='', flush=True)
+
+            # ── Esperar 60 segundos antes de la siguiente comprobación ───
+            time.sleep(60)
 
 
 # ============================================================
@@ -372,3 +483,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
