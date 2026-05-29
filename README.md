@@ -1,197 +1,129 @@
-# 🕐 Auto Fichaje - NCS Clock
+# 🕐 Auto Fichaje NCS
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+Bot personal de fichaje automático para `clock.ncs.es`. Ficha entrada y salida automáticamente de lunes a viernes, a horas aleatorias dentro de una ventana configurable.
 
-Sistema automático de fichaje para NCS Clock con interfaz gráfica, registro CSV y ejecución en segundo plano.
+## ✨ Qué hace
 
-## ✨ Características
+- Ficha **ENTRADA** entre `08:35` y `09:05` (hora aleatoria por día).
+- Ficha **SALIDA** entre `18:00` y `18:30`.
+- Solo de **lunes a viernes**.
+- Si ya fichaste manualmente, **lo detecta y no te desficha** (tres guardias de seguridad antes de cada clic).
+- Registra todo en `fichajes.csv` (histórico).
+- Si falla 3 veces seguidas, te avisa con un **popup** para que fiches a mano.
 
-- 🔐 **Interfaz gráfica** para configurar credenciales (primera ejecución)
-- ⏰ **Fichaje automático** de Lunes a Viernes
-  - Entrada aleatoria: 8:50 - 9:05
-  - Salida aleatoria: 18:05 - 18:30
-- 📊 **Registro CSV** completo de todos los fichajes
-- 👻 **Modo invisible** (navegador headless)
-- 🚀 **Ejecutable standalone** (.exe) - no requiere Python instalado
-- 🔄 **Funciona en segundo plano** hasta apagar el PC
+## 🚀 Para usuarios (solo el .exe)
 
-## 🎁 Para Usuarios Finales (Compañeros de Trabajo)
+1. Descarga `AutoFichajeNCS.exe`.
+2. Doble clic. La primera vez te pedirá usuario y contraseña.
+3. Deja el panel abierto. Trabajará en segundo plano.
 
-Si solo quieres **usar** el programa:
+Si quieres que arranque solo al encender el PC, coloca un acceso directo al `.exe` en:
+`C:\Users\TU_USUARIO\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\`
 
-1. **Descarga** el ejecutable desde [Releases](../../releases)
-2. **Ejecuta** `AutoFichajeNCS.exe`
-3. **Introduce** tu usuario y contraseña en la ventana
-4. **¡Listo!** Ya está funcionando
+### Modo silencioso (sin ventana)
 
-👉 Ver [DISTRIBUIR_EXE.md](DISTRIBUIR_EXE.md) para más información
+```powershell
+AutoFichajeNCS.exe --silencioso
+```
 
-## 👨‍💻 Para Desarrolladores
-
-Si quieres **modificar** o **compilar** el código:
+## 👨‍💻 Para desarrolladores
 
 ### Requisitos
-
-- Python 3.8 o superior
+- Python 3.10+ (probado en 3.12)
 - Google Chrome instalado
 
 ### Instalación
-
-```bash
-# Clonar el repositorio
-git clone https://github.com/TU_USUARIO/auto-fichaje-ncs.git
+```powershell
+git clone <url>
 cd auto-fichaje-ncs
-
-# Instalar dependencias
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
-### Uso
-
-#### Opción 1: Versión con Interfaz Gráfica (Recomendado)
-
-```bash
-python auto_fichaje_gui.py
+### Ejecutar
+```powershell
+python app.py              # GUI
+python app.py --silencioso # Sin ventana
 ```
 
-- Primera ejecución: Muestra ventana para configurar credenciales
-- Siguientes ejecuciones: Usa credenciales guardadas
-
-#### Opción 2: Versión con archivo .env
-
-```bash
-# Crear archivo .env
-copy .env.example .env
-notepad .env  # Editar con tus credenciales
-
-# Ejecutar
-python auto_fichaje.py
+### Tests
+```powershell
+pytest tests/ -v
 ```
 
-### Compilar Ejecutable
-
-```bash
-# Versión con GUI (recomendada para distribución)
-python compilar_exe_gui.py
-
-# Versión sin GUI
-python compilar_exe.py
+### Compilar a .exe
+```powershell
+python compilar.py
+# Resultado en dist\AutoFichajeNCS.exe
 ```
 
-El ejecutable estará en `dist/AutoFichajeNCS.exe`
-
-## 📖 Documentación
-
-- [README.md](README.md) - Documentación general y uso
-- [DISTRIBUIR_EXE.md](DISTRIBUIR_EXE.md) - Guía para distribuir a compañeros
-- [COMPILAR_EXE.md](COMPILAR_EXE.md) - Compilación detallada
-- [SERVICIO_WINDOWS.md](SERVICIO_WINDOWS.md) - Configurar como servicio de Windows
-
-## 🗂️ Estructura del Proyecto
+## 📂 Estructura
 
 ```
 auto-fichaje-ncs/
-├── auto_fichaje.py           # Script principal (requiere .env)
-├── auto_fichaje_gui.py       # Script con interfaz gráfica
-├── ncs_login.py              # Módulo de login
-├── ncs_fichaje.py            # Módulo de fichaje
-├── ncs_csv_logger.py         # Registro CSV
-├── test_login.py             # Test de login
-├── test_fichaje.py           # Test completo
-├── compilar_exe.py           # Compilador (sin GUI)
-├── compilar_exe_gui.py       # Compilador (con GUI)
-├── requirements.txt          # Dependencias
-├── .env.example              # Plantilla de credenciales
-└── fichajes.csv              # Registro (generado automáticamente)
+├── app.py             Entry point (GUI + --silencioso)
+├── ncs.py             Login + fichaje + verificación de estado
+├── scheduler.py       Bucle diario + EstadoDiario
+├── lock.py            Single-instance lock con verificación de PID
+├── csv_log.py         Logger CSV histórico
+├── notifier.py        Popups thread-safe
+├── credenciales.py    Gestión de usuario/password
+├── config.py          Constantes + resolución de paths
+├── tests/             pytest suite (sin red ni Chrome)
+└── compilar.py        Build con PyInstaller
 ```
 
-## ⚙️ Configuración
+## 🔧 Configuración
 
-### Horarios
+### Dónde se guardan los archivos
+Por defecto, junto al `.exe` (o al script). Puedes redirigir con:
+```powershell
+$env:AUTO_FICHAJE_DATA_DIR = "D:\MisFichajes"
+```
 
-Edita las variables en `auto_fichaje.py` o `auto_fichaje_gui.py`:
+Archivos generados:
+- `fichajes.csv` — historial de fichajes
+- `estado_diario.json` — estado del día
+- `auto_fichaje.log` — log detallado
+- `auto_fichaje.lock` — lock de instancia única (se borra al cerrar)
 
+### Cambiar horarios
+Edita `config.py`:
 ```python
-ENTRADA_DESDE = "08:50"
+ENTRADA_DESDE = "08:35"
 ENTRADA_HASTA = "09:05"
-SALIDA_DESDE = "18:05"
-SALIDA_HASTA = "18:30"
+SALIDA_DESDE  = "18:00"
+SALIDA_HASTA  = "18:30"
 ```
 
-### Credenciales
+## 🔍 Cómo verifica que fichó
 
-**Versión .env:**
-```
-NCS_USUARIO=tu_usuario
-NCS_PASSWORD=tu_contraseña
-```
+Tres capas de seguridad antes de pulsar el botón:
 
-**Versión GUI:**
-Se configuran en la primera ejecución y se guardan en:
-```
-C:\Users\[USUARIO]\AppData\Local\AutoFichajeNCS\config.dat
-```
+1. **Lectura del estado real de NCS** con 3 reintentos. Si tras los reintentos no se puede leer (`DESCONOCIDO`), **aborta** sin pulsar.
+2. **Verificación cruzada alerta vs presencia**. Si la web dice "estás fuera" pero el contador de presencia es > 00:00, **aborta** (alerta cacheada o incoherente).
+3. **Skip si ya estaba hecho**. Si tocaba ENTRADA pero ya estás dentro (fichaste a mano), se salta el clic.
 
-## 🧪 Testing
+Si las 3 guardias pasan, pulsa el botón y verifica que la alerta cambia. Si no cambia tras 12 segundos pero tampoco hay error visible, lo acepta con un warning.
 
-```bash
-# Probar solo el login
-python test_login.py
+## 🐛 Solución de problemas
 
-# Probar fichaje completo
-python test_fichaje.py
+### "Auto Fichaje ya en ejecución (PID=X)" pero no veo nada corriendo
+Es un lock huérfano. El bot lo detecta automáticamente si el PID está muerto. Si no se borra solo, hazlo a mano:
+```powershell
+Remove-Item .\auto_fichaje.lock
 ```
 
-## 📊 Formato del CSV
+### El bot dice "No pude leer NCS" 3 veces seguidas
+Probablemente NCS cambió el HTML. Avisa al desarrollador para actualizar los selectores.
 
-```csv
-fecha,hora_entrada,hora_salida,total_horas,jornada,extra_ausencia,observaciones
-2026-02-10,08:52:34,18:12:45,09:20,08:00,Extr. 01:20,Fichaje automático
-```
-
-## 🔒 Seguridad
-
-- ⚠️ **No subas el archivo `.env`** a GitHub (incluido en `.gitignore`)
-- ⚠️ **No compartas el archivo `config.dat`** con nadie
-- ✅ Las credenciales se almacenan localmente (ofuscadas en base64)
-- ✅ El navegador se ejecuta en modo headless (invisible)
-
-## 🐛 Solución de Problemas
-
-**El login falla:**
-- Verifica que las credenciales sean correctas
-- Comprueba que puedes acceder manualmente a https://clock.ncs.es
-
-**No encuentra Chrome:**
-- Asegúrate de tener Google Chrome instalado
-
-**El ejecutable no se crea:**
-- Ejecuta: `pip install -r requirements.txt`
-- Vuelve a intentar compilar
-
-## 🤝 Contribuir
-
-1. Fork el proyecto
-2. Crea una rama para tu feature (`git checkout -b feature/NuevaCaracteristica`)
-3. Commit tus cambios (`git commit -m 'Añadir nueva característica'`)
-4. Push a la rama (`git push origin feature/NuevaCaracteristica`)
-5. Abre un Pull Request
+### No encuentra Chrome
+Instala Google Chrome: https://www.google.com/chrome/
 
 ## 📄 Licencia
 
-Este proyecto es de código abierto y está disponible bajo la [Licencia MIT](LICENSE).
+MIT — ver `LICENSE`.
 
 ## ⚠️ Disclaimer
 
-Este proyecto es una herramienta personal de automatización. Úsalo bajo tu propia responsabilidad y asegúrate de que cumple con las políticas de tu empresa.
-
-## 🙏 Agradecimientos
-
-- [Selenium](https://www.selenium.dev/) - Automatización web
-- [webdriver-manager](https://github.com/SergeyPirogov/webdriver_manager) - Gestión de drivers
-- [PyInstaller](https://www.pyinstaller.org/) - Empaquetado de ejecutables
-
----
-
-Hecho con ❤️ para automatizar el fichaje y tener más tiempo para lo importante.
+Herramienta personal. Úsala bajo tu propia responsabilidad y asegúrate de que cumple con las políticas de tu empresa.

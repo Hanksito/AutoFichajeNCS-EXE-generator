@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "browser-automation": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "3d7c49c1f4ea5c5bbfcc85e24e9459b19beadfc01acc64a2ff1111d149c8d069"
+    },
+    "clean-code": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "78cc52dda1fa19d4a49b71fa4e9733fe91cb370887a5b91b6e8b4781b56c428a"
+    }
+  }
+}

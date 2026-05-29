@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Process*)",
+      "PowerShell(Get-ChildItem*)",
+      "Bash(curl *)",
+      "PowerShell(Set-Location*)",
+      "PowerShell(Get-Item*)",
+      "PowerShell(Test-Path*)"
+    ]
+  }
+}
