@@ -33,15 +33,15 @@ def main() -> int:
     print("Compilando con: " + " ".join(args))
     resultado = subprocess.run(args, cwd=str(raiz))
     if resultado.returncode != 0:
-        print("❌ Compilación fallida.")
+        print("[ERROR] Compilacion fallida.")
         return resultado.returncode
 
     exe = raiz / "dist" / "AutoFichajeNCS.exe"
     if exe.exists():
-        print(f"✅ .exe creado: {exe}")
-        print(f"   Tamaño: {exe.stat().st_size / 1024 / 1024:.1f} MB")
+        print(f"[OK] .exe creado: {exe}")
+        print(f"     Tamano: {exe.stat().st_size / 1024 / 1024:.1f} MB")
     else:
-        print("⚠️  Compilación terminó pero el .exe no aparece.")
+        print("[WARN] Compilacion termino pero el .exe no aparece.")
         return 1
     return 0
 
