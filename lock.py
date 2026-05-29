@@ -13,6 +13,8 @@ import psutil
 
 import config
 
+_atexit_registrado: bool = False
+
 
 class LockBusy(Exception):
     """Hay otra instancia VIVA del proceso ejecutándose."""
@@ -70,18 +72,41 @@ def adquirir() -> None:
     Raises:
         LockBusy: si ya hay un lock con un PID vivo y reciente.
     """
+    global _atexit_registrado
     lock_path: Path = config.LOCK_FILE
-    if lock_path.exists():
-        contenido = lock_path.read_text(encoding="utf-8").strip()
-        es_huerfano, pid_existente = _es_huerfano(contenido)
-        if not es_huerfano:
-            raise LockBusy(pid_existente)
-        # Huérfano → sobrescribimos sin error
-    pid_actual = os.getpid()
-    nuevo = f"PID={pid_actual} iniciado={datetime.now().isoformat()}"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text(nuevo, encoding="utf-8")
-    atexit.register(liberar)
+    contenido_nuevo = f"PID={os.getpid()} iniciado={datetime.now().isoformat()}"
+
+    # Bucle: si el lock está libre o es huérfano, intentamos crearlo
+    # atómicamente. Si otro proceso se nos adelanta entre intento y intento,
+    # reevaluamos el lock que acaba de aparecer.
+    while True:
+        try:
+            # 'x' = O_EXCL — falla si el archivo existe
+            with open(lock_path, "x", encoding="utf-8") as f:
+                f.write(contenido_nuevo)
+            break  # creado con éxito
+        except FileExistsError:
+            # Existe — comprobar si es huérfano
+            try:
+                contenido = lock_path.read_text(encoding="utf-8").strip()
+            except FileNotFoundError:
+                # otro proceso lo borró entre nuestro intento y la lectura;
+                # volvemos a intentar la creación
+                continue
+            es_huerfano, pid_existente = _es_huerfano(contenido)
+            if not es_huerfano:
+                raise LockBusy(pid_existente)
+            # Es huérfano: lo borramos y reintentamos en el siguiente ciclo
+            try:
+                lock_path.unlink(missing_ok=True)
+            except OSError:
+                # Si no podemos borrarlo, abortamos para no inventar éxito
+                raise LockBusy(pid_existente)
+
+    if not _atexit_registrado:
+        atexit.register(liberar)
+        _atexit_registrado = True
 
 
 def liberar() -> None:

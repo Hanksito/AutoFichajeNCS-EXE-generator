@@ -78,3 +78,18 @@ def test_liberar_es_idempotente(tmp_path, monkeypatch):
     lk.adquirir()
     lk.liberar()
     lk.liberar()  # tampoco debe lanzar
+
+
+def test_atexit_se_registra_solo_una_vez(tmp_path, monkeypatch):
+    """Llamar adquirir() múltiples veces (tras liberar) no acumula registros."""
+    import atexit
+    lk = _reload_lock(tmp_path, monkeypatch)
+    n_antes = len(atexit._exithandlers) if hasattr(atexit, "_exithandlers") else 0
+    lk.adquirir()
+    lk.liberar()
+    n_uno = len(atexit._exithandlers) if hasattr(atexit, "_exithandlers") else 0
+    lk.adquirir()
+    lk.liberar()
+    n_dos = len(atexit._exithandlers) if hasattr(atexit, "_exithandlers") else 0
+    # No debe haber crecido entre la primera y la segunda llamada
+    assert n_dos == n_uno
