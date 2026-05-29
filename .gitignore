@@ -57,3 +57,10 @@ fichajes.csv
 # Temporal
 *.tmp
 *.bak
+
+# Runtime artifacts (no deben versionarse)
+auto_fichaje.lock
+estado_diario.json
+
+# Tests
+.pytest_cache/
