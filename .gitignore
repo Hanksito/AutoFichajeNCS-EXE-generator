@@ -64,3 +64,8 @@ estado_diario.json
 
 # Tests
 .pytest_cache/
+
+# Auto Fichaje runtime — explicit literals (also covered by globs above)
+auto_fichaje.log
+*.pyc
+AutoFichajeNCS.spec
