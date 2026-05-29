@@ -62,15 +62,16 @@ PAUSA_MIN = 1.0
 PAUSA_MAX = 3.5
 TIMEOUT_CARGA = 30
 
-# Selectores CSS para el botón de fichaje (probados en orden)
+# Selectores CSS para el boton de fichaje (probados en orden).
+# El HTML actual de NCS usa <a id="btnTicar"> (enlace, NO un button).
+# Mantenemos varios para tolerar cambios futuros del DOM.
 SELECTORES_BOTON_FICHAJE = [
-    "button#btnTicar",
+    "a#btnTicar",                # actual: <a id="btnTicar">Marcar</a>
+    "#btnTicar",                 # fallback: cualquier tag con ese id
+    "button#btnTicar",           # por si lo cambian a button
     "input#btnTicar",
-    "button#btnTicada",
-    "input#btnTicada",
-    "button.btn-ticada",
-    "input[type='submit'][value*='Ticar']",
-    "button[onclick*='Ticada']",
+    "a#btnTicada",
+    "#btnTicada",
 ]
 
 # Selectores para login
