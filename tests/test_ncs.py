@@ -3,7 +3,7 @@
 import importlib
 from unittest.mock import MagicMock, patch
 import pytest
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
 
 def _reload_ncs(tmp_path, monkeypatch):
@@ -190,3 +190,60 @@ def test_no_se_pulsa_boton_si_boton_no_se_encuentra(tmp_path, monkeypatch):
             res = mod.realizar_fichaje(driver, tipo_esperado="ENTRADA")
     assert res.success is False
     assert res.html_cambio is True  # botón no encontrado = HTML cambió
+
+
+# ──────────────────────────────────────────────────────────
+# Tests de realizar_login
+# ──────────────────────────────────────────────────────────
+
+def test_login_devuelve_true_si_no_hay_modal(tmp_path, monkeypatch):
+    """Si no aparece el modal, ya estamos logueados → success."""
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver = MagicMock()
+    with patch("ncs.WebDriverWait") as wait_mock:
+        # Simular que detectar_modal_login no encuentra el modal
+        wait_mock.return_value.until.side_effect = TimeoutException("no modal")
+        ok = mod.realizar_login(driver, "u", "p")
+    assert ok is True
+
+
+def test_login_falla_si_credenciales_erroneas(tmp_path, monkeypatch):
+    """Si tras pulsar Login aparece #messenger .failed visible → False."""
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver = MagicMock()
+    modal = MagicMock(); modal.is_displayed.return_value = True
+    user_field = MagicMock(); pass_field = MagicMock(); boton_login = MagicMock()
+    failed_msg = MagicMock(); failed_msg.is_displayed.return_value = True
+    failed_msg.text = "Credenciales incorrectas"
+
+    call_count = {"n": 0}
+
+    def wait_until_side_effect(*args, **kwargs):
+        # Simulamos: 1ª llamada (detectar modal) → modal,
+        # 2ª (campo usuario), 3ª (campo password), 4ª (botón login)
+        call_count["n"] += 1
+        return [modal, user_field, pass_field, boton_login][min(call_count["n"]-1, 3)]
+
+    def find_element_side_effect(by, selector):
+        if "failed" in str(selector):
+            return failed_msg
+        raise NoSuchElementException()
+
+    driver.find_element = MagicMock(side_effect=find_element_side_effect)
+
+    with patch("ncs.WebDriverWait") as wait_mock:
+        wait_mock.return_value.until.side_effect = wait_until_side_effect
+        ok = mod.realizar_login(driver, "u", "p")
+    assert ok is False
+
+
+# ──────────────────────────────────────────────────────────
+# Tests de crear_navegador (smoke — solo que devuelve algo)
+# ──────────────────────────────────────────────────────────
+
+def test_crear_navegador_devuelve_none_si_falla(tmp_path, monkeypatch):
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    with patch("ncs.ChromeDriverManager") as cdm:
+        cdm.return_value.install.side_effect = Exception("simulado")
+        driver = mod.crear_navegador()
+    assert driver is None

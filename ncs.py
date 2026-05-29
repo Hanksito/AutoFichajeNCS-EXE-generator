@@ -263,3 +263,109 @@ def realizar_fichaje(driver, tipo_esperado: str) -> ResultadoFichaje:
         extra="",
         mensaje=f"Fichaje {tipo_esperado} ejecutado a las {hora_fichaje}",
     )
+
+
+# ──────────────────────────────────────────────────────────
+# Login
+# ──────────────────────────────────────────────────────────
+
+def _escribir_como_humano(elemento, texto: str) -> None:
+    elemento.clear()
+    _pausa_humana(0.3, 0.7)
+    for char in texto:
+        elemento.send_keys(char)
+        time.sleep(random.uniform(0.05, 0.15))
+    _pausa_humana(0.2, 0.5)
+
+
+def realizar_login(driver, usuario: str, password: str, timeout: int = 30) -> bool:
+    """Login en clock.ncs.es.
+
+    Returns:
+        True si login exitoso (incluye "ya logueado").
+        False si credenciales incorrectas o algún campo del modal no aparece.
+    """
+    # ¿Hay modal de login?
+    try:
+        modal = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "#myModal.modal.fade.in"))
+        )
+        if not modal.is_displayed():
+            return True
+    except TimeoutException:
+        return True  # ya logueado
+
+    _pausa_humana(1.0, 2.0)
+
+    # Llenar usuario
+    try:
+        campo_u = WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.ID, "tbUserName"))
+        )
+        campo_p = WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.ID, "tbPassword"))
+        )
+    except TimeoutException:
+        return False
+
+    _escribir_como_humano(campo_u, usuario)
+    _pausa_humana(0.5, 1.0)
+    _escribir_como_humano(campo_p, password)
+    _pausa_humana(0.8, 1.5)
+
+    # Botón
+    try:
+        boton = WebDriverWait(driver, timeout).until(
+            EC.element_to_be_clickable((By.ID, "LoginBtn"))
+        )
+    except TimeoutException:
+        return False
+
+    try:
+        boton.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", boton)
+
+    _pausa_humana(2.0, 4.0)
+
+    # ¿Mensaje de error?
+    try:
+        error = driver.find_element(By.CSS_SELECTOR, "#messenger .failed")
+        if error.is_displayed():
+            return False
+    except NoSuchElementException:
+        pass
+
+    # Esperar a que el modal desaparezca
+    try:
+        WebDriverWait(driver, 10).until_not(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "#myModal.modal.fade.in"))
+        )
+        return True
+    except TimeoutException:
+        return False
+
+
+# ──────────────────────────────────────────────────────────
+# crear_navegador
+# ──────────────────────────────────────────────────────────
+
+def crear_navegador():
+    """Crea un Chrome headless con anti-detección. None si falla."""
+    opciones = Options()
+    opciones.add_argument("--headless=new")
+    opciones.add_argument("--window-size=1366,768")
+    opciones.add_argument("--disable-blink-features=AutomationControlled")
+    opciones.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opciones.add_experimental_option("useAutomationExtension", False)
+    opciones.add_argument("--disable-notifications")
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=opciones)
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"},
+        )
+        return driver
+    except Exception:
+        return None
