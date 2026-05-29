@@ -100,3 +100,93 @@ def test_estado_incoherente_si_alerta_salida_pero_presencia_cero(tmp_path, monke
     estado = mod.leer_estado_seguro(driver, intentos=1, espera=0.0)
     assert estado.accion_siguiente == "SALIDA"
     assert estado.coherente is False
+
+
+# ──────────────────────────────────────────────────────────
+# Tests de realizar_fichaje — LAS 3 GUARDIAS
+# ──────────────────────────────────────────────────────────
+
+def _driver_completo(alerta_clase, alerta_texto, presencia="00:00"):
+    """Driver fake con botón btnTicar también accesible."""
+    driver = _driver_con_alerta(alerta_clase, alerta_texto, presencia)
+    boton = MagicMock(); boton.click = MagicMock(name="click_boton")
+    driver._boton_fichaje = boton
+    return driver, boton
+
+
+def test_aborta_si_estado_desconocido_tras_reintentos(tmp_path, monkeypatch):
+    """GUARDIA 1: nunca pulsar si no sabemos el estado."""
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver, boton = _driver_completo(None, "")  # ninguna alerta
+    with patch.object(mod, "leer_estado_seguro",
+                       return_value=mod.EstadoWeb("DESCONOCIDO", "", False)):
+        with patch.object(mod, "_localizar_boton", return_value=boton):
+            res = mod.realizar_fichaje(driver, tipo_esperado="ENTRADA")
+    assert boton.click.called is False, "NO debe pulsar si estado es desconocido"
+    assert res.success is False
+    assert res.saltado is False
+    assert res.html_cambio is True
+
+
+def test_aborta_si_incoherencia_alerta_presencia(tmp_path, monkeypatch):
+    """GUARDIA 2: nunca pulsar si alerta y presencia se contradicen."""
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver, boton = _driver_completo("info", "ENTRAR", presencia="09:15")
+    estado = mod.EstadoWeb("ENTRADA", "09:15", coherente=False)
+    with patch.object(mod, "leer_estado_seguro", return_value=estado):
+        with patch.object(mod, "_localizar_boton", return_value=boton):
+            res = mod.realizar_fichaje(driver, tipo_esperado="ENTRADA")
+    assert boton.click.called is False
+    assert res.success is False
+    assert res.html_cambio is True
+
+
+def test_skip_si_ya_dentro_y_tipo_entrada(tmp_path, monkeypatch):
+    """GUARDIA 3: skip si ya estás dentro y tocaba ENTRADA."""
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver, boton = _driver_completo("success", "SALIR", presencia="00:23")
+    estado = mod.EstadoWeb("SALIDA", "00:23", coherente=True)
+    with patch.object(mod, "leer_estado_seguro", return_value=estado):
+        with patch.object(mod, "_localizar_boton", return_value=boton):
+            res = mod.realizar_fichaje(driver, tipo_esperado="ENTRADA")
+    assert boton.click.called is False, "NO debe pulsar si ya estás dentro"
+    assert res.success is True
+    assert res.saltado is True
+
+
+def test_skip_si_ya_fuera_y_tipo_salida(tmp_path, monkeypatch):
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver, boton = _driver_completo("info", "ENTRAR", presencia="00:00")
+    estado = mod.EstadoWeb("ENTRADA", "00:00", coherente=True)
+    with patch.object(mod, "leer_estado_seguro", return_value=estado):
+        with patch.object(mod, "_localizar_boton", return_value=boton):
+            res = mod.realizar_fichaje(driver, tipo_esperado="SALIDA")
+    assert boton.click.called is False
+    assert res.success is True
+    assert res.saltado is True
+
+
+def test_ficha_normal_si_estado_coherente_y_tocaba(tmp_path, monkeypatch):
+    """Caso feliz: estado coherente, tocaba el fichaje esperado → click."""
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver, boton = _driver_completo("info", "ENTRAR", presencia="00:00")
+    estado = mod.EstadoWeb("ENTRADA", "00:00", coherente=True)
+    estado_post = mod.EstadoWeb("SALIDA", "00:00", coherente=True)
+    with patch.object(mod, "leer_estado_seguro", side_effect=[estado, estado_post]):
+        with patch.object(mod, "_localizar_boton", return_value=boton):
+            res = mod.realizar_fichaje(driver, tipo_esperado="ENTRADA")
+    assert boton.click.called is True
+    assert res.success is True
+    assert res.saltado is False
+    assert res.tipo == "ENTRADA"
+
+
+def test_no_se_pulsa_boton_si_boton_no_se_encuentra(tmp_path, monkeypatch):
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver, _ = _driver_completo("info", "ENTRAR", presencia="00:00")
+    estado = mod.EstadoWeb("ENTRADA", "00:00", coherente=True)
+    with patch.object(mod, "leer_estado_seguro", return_value=estado):
+        with patch.object(mod, "_localizar_boton", return_value=None):
+            res = mod.realizar_fichaje(driver, tipo_esperado="ENTRADA")
+    assert res.success is False
+    assert res.html_cambio is True  # botón no encontrado = HTML cambió
