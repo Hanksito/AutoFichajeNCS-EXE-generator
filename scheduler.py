@@ -155,7 +155,9 @@ def _hora_aleatoria(desde: str, hasta: str) -> datetime:
 
 
 def _dentro_de_ventana_ampliada(ahora: datetime, hasta_str: str) -> bool:
-    limite = _hora_str_a_dt(hasta_str) + timedelta(minutes=config.MARGEN_VENTANA_EXTRA)
+    # El límite se calcula sobre el MISMO día que `ahora`, no sobre now(),
+    # para no mezclar fechas (robusto si el proceso cruza medianoche y testeable).
+    limite = _hora_str_a_dt(hasta_str, base=ahora) + timedelta(minutes=config.MARGEN_VENTANA_EXTRA)
     return ahora <= limite
 
 

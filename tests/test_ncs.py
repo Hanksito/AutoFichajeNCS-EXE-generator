@@ -84,22 +84,28 @@ def test_leer_estado_reintenta_si_desconocido(tmp_path, monkeypatch):
     assert driver.find_element.call_count >= 6
 
 
-def test_estado_incoherente_si_alerta_entrada_pero_presencia_no_cero(tmp_path, monkeypatch):
+def test_alerta_salida_con_presencia_cero_es_coherente(tmp_path, monkeypatch):
+    """Regresión del bug de producción (2026-06-02): estar DENTRO (alerta
+    SALIDA) con #presencia=00:00 es un estado VÁLIDO — pasa cuando la sesión
+    quedó abierta de un día anterior, por lo que la presencia de HOY es 0.
+    El bot debe confiar en la alerta y considerarlo coherente, no abortar."""
     mod = _reload_ncs(tmp_path, monkeypatch)
-    # Alerta dice "ENTRAR" (fuera) pero presencia es 09:15 (estuviste dentro)
-    driver = _driver_con_alerta("info", "Estas fuera Marcas para ENTRAR", presencia="09:15")
-    estado = mod.leer_estado_seguro(driver, intentos=1, espera=0.0)
-    assert estado.accion_siguiente == "ENTRADA"
-    assert estado.coherente is False
-
-
-def test_estado_incoherente_si_alerta_salida_pero_presencia_cero(tmp_path, monkeypatch):
-    mod = _reload_ncs(tmp_path, monkeypatch)
-    # Alerta dice "SALIR" (dentro) pero presencia es 00:00 (acabas de entrar?)
     driver = _driver_con_alerta("success", "Estas dentro Marcas para SALIR", presencia="00:00")
     estado = mod.leer_estado_seguro(driver, intentos=1, espera=0.0)
     assert estado.accion_siguiente == "SALIDA"
-    assert estado.coherente is False
+    assert estado.presencia_actual == "00:00"
+    assert estado.coherente is True
+
+
+def test_alerta_entrada_con_presencia_no_cero_es_coherente(tmp_path, monkeypatch):
+    """La presencia es solo informativa: aunque marque tiempo, si la alerta
+    dice FUERA confiamos en la alerta (coherente)."""
+    mod = _reload_ncs(tmp_path, monkeypatch)
+    driver = _driver_con_alerta("info", "Estas fuera Marcas para ENTRAR", presencia="09:15")
+    estado = mod.leer_estado_seguro(driver, intentos=1, espera=0.0)
+    assert estado.accion_siguiente == "ENTRADA"
+    assert estado.presencia_actual == "09:15"
+    assert estado.coherente is True
 
 
 # ──────────────────────────────────────────────────────────
@@ -128,17 +134,20 @@ def test_aborta_si_estado_desconocido_tras_reintentos(tmp_path, monkeypatch):
     assert res.html_cambio is True
 
 
-def test_aborta_si_incoherencia_alerta_presencia(tmp_path, monkeypatch):
-    """GUARDIA 2: nunca pulsar si alerta y presencia se contradicen."""
+def test_ficha_salida_aunque_presencia_sea_cero(tmp_path, monkeypatch):
+    """Regresión del bug de producción: estar DENTRO (alerta SALIDA) con
+    presencia=00:00 (sesión abierta de otro día) debe FICHAR la salida,
+    no abortar. Antes la GUARDIA de presencia lo bloqueaba."""
     mod = _reload_ncs(tmp_path, monkeypatch)
-    driver, boton = _driver_completo("info", "ENTRAR", presencia="09:15")
-    estado = mod.EstadoWeb("ENTRADA", "09:15", coherente=False)
+    driver, boton = _driver_completo("success", "SALIR", presencia="00:00")
+    estado = mod.EstadoWeb("SALIDA", "00:00", coherente=True)
     with patch.object(mod, "leer_estado_seguro", return_value=estado):
         with patch.object(mod, "_localizar_boton", return_value=boton):
-            res = mod.realizar_fichaje(driver, tipo_esperado="ENTRADA")
-    assert boton.click.called is False
-    assert res.success is False
-    assert res.html_cambio is True
+            res = mod.realizar_fichaje(driver, tipo_esperado="SALIDA")
+    assert boton.click.called is True, "DEBE pulsar para cerrar la sesión"
+    assert res.success is True
+    assert res.saltado is False
+    assert res.tipo == "SALIDA"
 
 
 def test_skip_si_ya_dentro_y_tipo_entrada(tmp_path, monkeypatch):

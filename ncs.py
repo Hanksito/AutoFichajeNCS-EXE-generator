@@ -93,29 +93,28 @@ def _obtener_presencia(driver) -> str:
         return "00:00"
 
 
-def _presencia_a_segundos(presencia: str) -> int:
-    """'HH:MM' → segundos. 0 si no se puede parsear."""
-    try:
-        partes = presencia.strip().split(":")
-        if len(partes) >= 2:
-            return int(partes[0]) * 3600 + int(partes[1]) * 60
-    except ValueError:
-        pass
-    return 0
-
-
 # ──────────────────────────────────────────────────────────
-# Lectura segura (con reintentos + coherencia)
+# Lectura segura (con reintentos)
 # ──────────────────────────────────────────────────────────
 
 def leer_estado_seguro(driver, intentos: int = 3, espera: float = 2.0) -> EstadoWeb:
-    """Lee el estado con reintentos y verifica coherencia alerta vs presencia.
+    """Lee el estado de NCS, confiando en la ALERTA como señal autoritativa.
+
+    La alerta ('Estás dentro/fuera') la pinta el servidor y es la misma
+    señal que usa la web oficial de NCS para decidir si el botón entra o
+    sale. Por eso es fiable al instante.
+
+    `#presencia` se lee solo como INFORMACIÓN (va al CSV/log). NO se usa
+    para decidir, porque es la presencia acumulada *de hoy* y puede valer
+    '00:00' de forma legítima (p.ej. estás dentro por una sesión abierta de
+    un día anterior). Cruzarla con la alerta daba falsas incoherencias que
+    abortaban todos los fichajes.
 
     Returns:
         EstadoWeb con:
         - accion_siguiente: "ENTRADA", "SALIDA" o "DESCONOCIDO"
-        - presencia_actual: "HH:MM" leído de la página
-        - coherente: True si alerta y presencia concuerdan
+        - presencia_actual: "HH:MM" leído de la página (informativo)
+        - coherente: True si la alerta se pudo leer (accion != DESCONOCIDO)
     """
     accion: Literal["ENTRADA", "SALIDA", "DESCONOCIDO"] = "DESCONOCIDO"
     for i in range(intentos):
@@ -126,21 +125,10 @@ def leer_estado_seguro(driver, intentos: int = 3, espera: float = 2.0) -> Estado
             time.sleep(espera)
 
     presencia = _obtener_presencia(driver)
-    segs = _presencia_a_segundos(presencia)
-
-    # Coherencia: alerta vs presencia
-    coherente = True
-    if accion == "ENTRADA" and segs > 0:
-        coherente = False
-    elif accion == "SALIDA" and segs == 0:
-        coherente = False
-    elif accion == "DESCONOCIDO":
-        coherente = False  # no podemos confirmar nada
-
     return EstadoWeb(
         accion_siguiente=accion,
         presencia_actual=presencia,
-        coherente=coherente,
+        coherente=accion != "DESCONOCIDO",
     )
 
 
@@ -189,17 +177,19 @@ def _saltado(tipo: str, motivo: str, presencia: str) -> ResultadoFichaje:
 # ──────────────────────────────────────────────────────────
 
 def realizar_fichaje(driver, tipo_esperado: str) -> ResultadoFichaje:
-    """Realiza el fichaje del tipo esperado, con tres guardias de seguridad.
+    """Realiza el fichaje del tipo esperado, con dos guardias de seguridad.
 
-    GUARDIA 1: aborta si el estado de la web no se puede leer (DESCONOCIDO).
-    GUARDIA 2: aborta si la alerta y la presencia se contradicen (incoherencia).
-    GUARDIA 3: si ya está hecho lo esperado, se salta sin pulsar.
+    GUARDIA 1: aborta si el estado de la web no se puede leer (DESCONOCIDO),
+               para no pulsar a ciegas y arriesgar un desfichaje.
+    GUARDIA 2: si ya está hecho lo esperado (la alerta dice que ya estás en
+               el estado destino), se salta sin pulsar.
 
-    Solo si las tres guardias pasan, se pulsa el botón y se verifica.
+    La decisión se basa en la ALERTA, que es la señal autoritativa de NCS
+    (ver leer_estado_seguro). Solo si ambas guardias pasan, se pulsa.
     """
     estado = leer_estado_seguro(driver, intentos=3, espera=2.0)
 
-    # GUARDIA 1
+    # GUARDIA 1: estado ilegible → no tocamos nada
     if estado.accion_siguiente == "DESCONOCIDO":
         return _abortado(
             tipo_esperado,
@@ -208,17 +198,7 @@ def realizar_fichaje(driver, tipo_esperado: str) -> ResultadoFichaje:
             html_cambio=True,
         )
 
-    # GUARDIA 2
-    if not estado.coherente:
-        return _abortado(
-            tipo_esperado,
-            f"Alerta y presencia no coinciden "
-            f"(accion={estado.accion_siguiente}, presencia={estado.presencia_actual}). "
-            f"Aborto por seguridad.",
-            html_cambio=True,
-        )
-
-    # GUARDIA 3: ya fichado a mano
+    # GUARDIA 2: ya fichado a mano
     if tipo_esperado == "ENTRADA" and estado.accion_siguiente == "SALIDA":
         return _saltado(
             tipo_esperado,

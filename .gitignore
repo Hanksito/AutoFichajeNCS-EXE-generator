@@ -65,6 +65,11 @@ estado_diario.json
 # Tests
 .pytest_cache/
 
+# Snapshots y diagnósticos (datos personales / pesados)
+web descargada/
+diag_pagina.html
+diag_screenshot.png
+
 # Auto Fichaje runtime — explicit literals (also covered by globs above)
 auto_fichaje.log
 *.pyc
