@@ -29,6 +29,10 @@ class EstadoDiario:
     salida_ts: Optional[datetime] = None
     reintentos_entrada: int = 0
     reintentos_salida: int = 0
+    salida_almuerzo_ts: Optional[datetime] = None
+    entrada_almuerzo_ts: Optional[datetime] = None
+    reintentos_salida_almuerzo: int = 0
+    reintentos_entrada_almuerzo: int = 0
 
     @classmethod
     def _vacio_hoy(cls) -> "EstadoDiario":
@@ -74,6 +78,10 @@ class EstadoDiario:
             nuevo["salida_ts"] = None
         nuevo["reintentos_entrada"] = raw.get("reintentos_entrada", 0)
         nuevo["reintentos_salida"] = raw.get("reintentos_salida", 0)
+        nuevo["salida_almuerzo_ts"] = raw.get("salida_almuerzo_ts")
+        nuevo["entrada_almuerzo_ts"] = raw.get("entrada_almuerzo_ts")
+        nuevo["reintentos_salida_almuerzo"] = raw.get("reintentos_salida_almuerzo", 0)
+        nuevo["reintentos_entrada_almuerzo"] = raw.get("reintentos_entrada_almuerzo", 0)
         return nuevo
 
     @classmethod
@@ -88,6 +96,10 @@ class EstadoDiario:
             salida_ts=_dt(d.get("salida_ts")),
             reintentos_entrada=d.get("reintentos_entrada", 0),
             reintentos_salida=d.get("reintentos_salida", 0),
+            salida_almuerzo_ts=_dt(d.get("salida_almuerzo_ts")),
+            entrada_almuerzo_ts=_dt(d.get("entrada_almuerzo_ts")),
+            reintentos_salida_almuerzo=d.get("reintentos_salida_almuerzo", 0),
+            reintentos_entrada_almuerzo=d.get("reintentos_entrada_almuerzo", 0),
         )
 
     def guardar(self) -> None:
@@ -101,6 +113,10 @@ class EstadoDiario:
             "salida_ts": self.salida_ts.isoformat() if self.salida_ts else None,
             "reintentos_entrada": self.reintentos_entrada,
             "reintentos_salida": self.reintentos_salida,
+            "salida_almuerzo_ts": self.salida_almuerzo_ts.isoformat() if self.salida_almuerzo_ts else None,
+            "entrada_almuerzo_ts": self.entrada_almuerzo_ts.isoformat() if self.entrada_almuerzo_ts else None,
+            "reintentos_salida_almuerzo": self.reintentos_salida_almuerzo,
+            "reintentos_entrada_almuerzo": self.reintentos_entrada_almuerzo,
         }
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -114,6 +130,14 @@ class EstadoDiario:
         self.salida_ts = datetime.now()
         self.guardar()
 
+    def marcar_salida_almuerzo(self) -> None:
+        self.salida_almuerzo_ts = datetime.now()
+        self.guardar()
+
+    def marcar_entrada_almuerzo(self) -> None:
+        self.entrada_almuerzo_ts = datetime.now()
+        self.guardar()
+
     @property
     def entrada_realizada(self) -> bool:
         return self.entrada_ts is not None
@@ -121,6 +145,14 @@ class EstadoDiario:
     @property
     def salida_realizada(self) -> bool:
         return self.salida_ts is not None
+
+    @property
+    def salida_almuerzo_realizada(self) -> bool:
+        return self.salida_almuerzo_ts is not None
+
+    @property
+    def entrada_almuerzo_realizada(self) -> bool:
+        return self.entrada_almuerzo_ts is not None
 
     def es_dia_completado(self) -> bool:
         return self.entrada_realizada and self.salida_realizada
@@ -165,17 +197,28 @@ def _dentro_de_ventana_ampliada(ahora: datetime, hasta_str: str) -> bool:
 # Fichaje completo (orchestrates login + ncs.realizar_fichaje + csv)
 # ──────────────────────────────────────────────────────────
 
+_NCS_TIPO = {
+    "ENTRADA":          "ENTRADA",
+    "SALIDA":           "SALIDA",
+    "SALIDA_ALMUERZO":  "SALIDA",
+    "ENTRADA_ALMUERZO": "ENTRADA",
+}
+
+
 def _realizar_fichaje_completo(usuario: str, password: str, tipo: str,
                                   on_log: Callable[[str], None]):
     """Login + fichaje + cierre del navegador. Devuelve ncs.ResultadoFichaje."""
     import ncs
+    tipo_ncs = _NCS_TIPO.get(tipo, tipo)
     on_log(f"Abriendo navegador para {tipo}...")
-    driver = ncs.crear_navegador()
+    driver = ncs.crear_navegador(on_log=on_log)
     if driver is None:
         return ncs.ResultadoFichaje(
-            success=False, saltado=False, tipo=tipo,
+            success=False, saltado=False, tipo=tipo_ncs,
             hora_fichaje="", presencia="", jornada="", extra="",
-            mensaje="No se pudo abrir Chrome", html_cambio=False,
+            mensaje="No se pudo abrir Chrome (causa real arriba en el log; "
+                    "revisa que Chrome esté instalado y haya internet)",
+            html_cambio=False,
         )
     try:
         driver.get(config.URL_FICHAJE)
@@ -183,13 +226,13 @@ def _realizar_fichaje_completo(usuario: str, password: str, tipo: str,
         ok = ncs.realizar_login(driver, usuario, password)
         if not ok:
             return ncs.ResultadoFichaje(
-                success=False, saltado=False, tipo=tipo,
+                success=False, saltado=False, tipo=tipo_ncs,
                 hora_fichaje="", presencia="", jornada="", extra="",
                 mensaje="Login fallido (credenciales o web caída)",
                 html_cambio=False,
             )
         on_log(f"Verificando estado para {tipo}...")
-        return ncs.realizar_fichaje(driver, tipo_esperado=tipo)
+        return ncs.realizar_fichaje(driver, tipo_esperado=tipo_ncs)
     finally:
         try:
             driver.quit()
@@ -259,16 +302,49 @@ class Scheduler:
             return False
         return True
 
+    def _toca_salida_almuerzo(self, ahora: datetime) -> bool:
+        if not _es_laborable():
+            return False
+        e = self._estado
+        if e.salida_almuerzo_realizada:
+            return False
+        if ahora < _hora_str_a_dt(config.SALIDA_ALMUERZO, base=ahora):
+            return False
+        if not _dentro_de_ventana_ampliada(ahora, config.SALIDA_ALMUERZO):
+            return False
+        if e.reintentos_salida_almuerzo >= config.MAX_REINTENTOS:
+            return False
+        return True
+
+    def _toca_entrada_almuerzo(self, ahora: datetime) -> bool:
+        if not _es_laborable():
+            return False
+        e = self._estado
+        if e.entrada_almuerzo_realizada:
+            return False
+        if ahora < _hora_str_a_dt(config.ENTRADA_ALMUERZO, base=ahora):
+            return False
+        if not _dentro_de_ventana_ampliada(ahora, config.ENTRADA_ALMUERZO):
+            return False
+        if e.reintentos_entrada_almuerzo >= config.MAX_REINTENTOS:
+            return False
+        return True
+
     def _intentar_fichaje(self, tipo: str) -> None:
         """Realiza un intento, gestiona reintentos y notificación."""
         import notifier
         import csv_log
         import time as _time
 
-        reintentos_actuales = (
-            self._estado.reintentos_entrada if tipo == "ENTRADA"
-            else self._estado.reintentos_salida
-        )
+        if tipo == "ENTRADA":
+            reintentos_actuales = self._estado.reintentos_entrada
+        elif tipo == "SALIDA":
+            reintentos_actuales = self._estado.reintentos_salida
+        elif tipo == "SALIDA_ALMUERZO":
+            reintentos_actuales = self._estado.reintentos_salida_almuerzo
+        else:  # ENTRADA_ALMUERZO
+            reintentos_actuales = self._estado.reintentos_entrada_almuerzo
+
         if reintentos_actuales > 0:
             espera = config.BACKOFF_REINTENTOS[
                 min(reintentos_actuales - 1, len(config.BACKOFF_REINTENTOS) - 1)
@@ -287,8 +363,12 @@ class Scheduler:
             self._on_log(f"⏭️  {tipo} omitida: {resultado.mensaje}")
             if tipo == "ENTRADA":
                 self._estado.marcar_entrada()
-            else:
+            elif tipo == "SALIDA":
                 self._estado.marcar_salida()
+            elif tipo == "SALIDA_ALMUERZO":
+                self._estado.marcar_salida_almuerzo()
+            else:
+                self._estado.marcar_entrada_almuerzo()
             self._on_estado_cambia()
             return
 
@@ -297,7 +377,7 @@ class Scheduler:
             if tipo == "ENTRADA":
                 logger.registrar_entrada(resultado.hora_fichaje, observaciones="Automático")
                 self._estado.marcar_entrada()
-            else:
+            elif tipo == "SALIDA":
                 logger.registrar_salida(
                     resultado.hora_fichaje,
                     presencia=resultado.presencia,
@@ -306,6 +386,18 @@ class Scheduler:
                     observaciones="Automático",
                 )
                 self._estado.marcar_salida()
+            elif tipo == "SALIDA_ALMUERZO":
+                logger.registrar_salida(
+                    resultado.hora_fichaje,
+                    presencia=resultado.presencia,
+                    jornada=resultado.jornada,
+                    extra=resultado.extra,
+                    observaciones="Almuerzo - Automático",
+                )
+                self._estado.marcar_salida_almuerzo()
+            else:  # ENTRADA_ALMUERZO
+                logger.registrar_entrada(resultado.hora_fichaje, observaciones="Almuerzo - Automático")
+                self._estado.marcar_entrada_almuerzo()
             self._on_estado_cambia()
             return
 
@@ -313,10 +405,14 @@ class Scheduler:
         self._on_log(f"❌ {tipo} fallido: {resultado.mensaje}")
         if tipo == "ENTRADA":
             self._estado.reintentos_entrada += 1
-        else:
+        elif tipo == "SALIDA":
             self._estado.reintentos_salida += 1
+        elif tipo == "SALIDA_ALMUERZO":
+            self._estado.reintentos_salida_almuerzo += 1
+        else:
+            self._estado.reintentos_entrada_almuerzo += 1
         self._estado.guardar()
-        if tipo == "ENTRADA":
+        if tipo in ("ENTRADA", "ENTRADA_ALMUERZO"):
             logger.registrar_entrada(
                 "", observaciones=f"ERROR intento {reintentos_actuales + 1}: {resultado.mensaje}"
             )
@@ -326,10 +422,15 @@ class Scheduler:
                 observaciones=f"ERROR intento {reintentos_actuales + 1}: {resultado.mensaje}",
             )
 
-        reintentos_finales = (
-            self._estado.reintentos_entrada if tipo == "ENTRADA"
-            else self._estado.reintentos_salida
-        )
+        if tipo == "ENTRADA":
+            reintentos_finales = self._estado.reintentos_entrada
+        elif tipo == "SALIDA":
+            reintentos_finales = self._estado.reintentos_salida
+        elif tipo == "SALIDA_ALMUERZO":
+            reintentos_finales = self._estado.reintentos_salida_almuerzo
+        else:
+            reintentos_finales = self._estado.reintentos_entrada_almuerzo
+
         if reintentos_finales >= config.MAX_REINTENTOS:
             self._on_log(f"💥 Reintentos agotados para {tipo}. Avisando al usuario.")
             notifier.aviso_fallo(tipo, resultado.mensaje, html_cambio=resultado.html_cambio)
@@ -349,6 +450,7 @@ class Scheduler:
                     self._calcular_horarios_si_faltan()
                     self._on_log(
                         f"⏰ Hoy → Entrada: {self._estado.hora_entrada.strftime('%H:%M:%S')} "
+                        f"| Almuerzo: {config.SALIDA_ALMUERZO}-{config.ENTRADA_ALMUERZO} "
                         f"| Salida: {self._estado.hora_salida.strftime('%H:%M:%S')}"
                     )
                 else:
@@ -357,6 +459,10 @@ class Scheduler:
 
             if self._toca_entrada(ahora):
                 self._intentar_fichaje("ENTRADA")
+            if self._toca_salida_almuerzo(ahora):
+                self._intentar_fichaje("SALIDA_ALMUERZO")
+            if self._toca_entrada_almuerzo(ahora):
+                self._intentar_fichaje("ENTRADA_ALMUERZO")
             if self._toca_salida(ahora):
                 self._intentar_fichaje("SALIDA")
 
